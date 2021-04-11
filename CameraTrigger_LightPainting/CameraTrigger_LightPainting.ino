@@ -1,247 +1,125 @@
 /* 
-  Menu driven control of a sound board over UART.
-  Commands for playing by # or by name (full 11-char name)
-  Hard reset and List files (when not playing audio)
-  Vol + and - (only when not playing audio)
-  Pause, unpause, quit playing (when playing audio)
-  Current play time, and bytes remaining & total bytes (when playing audio)
+	Menu driven control of a sound board over UART.
+	Commands for playing by # or by name (full 11-char name)
+	Hard reset and List files (when not playing audio)
+	Vol + and - (only when not playing audio)
+	Pause, unpause, quit playing (when playing audio)
+	Current play time, and bytes remaining & total bytes (when playing audio)
 
-  Connect UG to ground to have the sound board boot into UART mode
+	
 */
 
-#include <SoftwareSerial.h>
+#define FASTLED_INTERNAL			// Stop the annoying messages during compile
+#include "FastLED.h"
 #include "Adafruit_Soundboard.h"
 
 
-// Choose any two pins that can be used with SoftwareSerial to RX & TX
-#define SFX_TX 5
-#define SFX_RX 6
+//////////////////////////////////////////////////// ARDUINO PIN SETUP
+// NOTE: SFX module connected to Serial1 port (pins 0-1)
 
-// Connect to the RST pin on the Sound Board
-#define SFX_RST 4
+#define PIN_SFX_RST 		4			// Reset line for SFX
 
-// You can also monitor the ACT pin for when audio is playing!
+#define PIN_LED_RING		6			// Data pin for ring of pixel LEDs
+#define PIN_LED_STATUS	21		// Data pin for status LEDs on box
+#define PIN_LED_ROOM		10		// PWM Output to run room light
 
-// we'll be using software serial
-SoftwareSerial ss = SoftwareSerial(SFX_TX, SFX_RX);
+#define PIN_BTN_TIME		20		// Button used to set time period for light painting
+#define PIN_BTN_START		19		// Button use to trigger photo sequence
+#define PIN_BTN_FOOTSW	5			// Footswitch for normal photobooth setup
 
-// pass the software serial to Adafruit_soundboard, the second
-// argument is the debug port (not used really) and the third 
-// arg is the reset pin
-Adafruit_Soundboard sfx = Adafruit_Soundboard(&ss, NULL, SFX_RST);
-// can also try hardware serial with
-// Adafruit_Soundboard sfx = Adafruit_Soundboard(&Serial1, NULL, SFX_RST);
-
-void setup() {
-  Serial.begin(115200);
-  Serial.println("Adafruit Sound Board!");
-  
-  // softwareserial at 9600 baud
-  ss.begin(9600);
-  // can also do Serial1.begin(9600)
-
-  if (!sfx.reset()) {
-    Serial.println("Not found");
-    while (1);
-  }
-  Serial.println("SFX board found");
-}
+#define PIN_CAM_FOCUS		8			// Focus trigger
+#define PIN_CAM_SHUTTER	9			// Shutter trigger
 
 
-void loop() {
-  flushInput();
-  
-  Serial.println(F("What would you like to do?"));
-  Serial.println(F("[r] - reset"));
-  Serial.println(F("[+] - Vol +"));
-  Serial.println(F("[-] - Vol -"));
-  Serial.println(F("[L] - List files"));
-  Serial.println(F("[P] - play by file name"));
-  Serial.println(F("[#] - play by file number"));
-  Serial.println(F("[=] - pause playing"));
-  Serial.println(F("[>] - unpause playing"));
-  Serial.println(F("[q] - stop playing"));
-  Serial.println(F("[t] - playtime status"));
-  Serial.println(F("> "));
-  
-  while (!Serial.available());
-  char cmd = Serial.read();
-  
-  flushInput();
-  
-  switch (cmd) {
-    case 'r': {
-      if (!sfx.reset()) {
-        Serial.println("Reset failed");
-      }
-      break; 
-    }
-    
-    case 'L': {
-      uint8_t files = sfx.listFiles();
-    
-      Serial.println("File Listing");
-      Serial.println("========================");
-      Serial.println();
-      Serial.print("Found "); Serial.print(files); Serial.println(" Files");
-      for (uint8_t f=0; f<files; f++) {
-        Serial.print(f); 
-        Serial.print("\tname: "); Serial.print(sfx.fileName(f));
-        Serial.print("\tsize: "); Serial.println(sfx.fileSize(f));
-      }
-      Serial.println("========================");
-      break; 
-    }
-    
-    case '#': {
-      Serial.print("Enter track #");
-      uint8_t n = readnumber();
 
-      Serial.print("\nPlaying track #"); Serial.println(n);
-      if (! sfx.playTrack((uint8_t)n) ) {
-        Serial.println("Failed to play track?");
-      }
-      break;
-    }
-    
-    case 'P': {
-      Serial.print("Enter track name (full 12 character name!) >");
-      char name[20];
-      readline(name, 20);
+/* SEQUENCE
 
-      Serial.print("\nPlaying track \""); Serial.print(name); Serial.print("\"");
-      if (! sfx.playTrack(name) ) {
-        Serial.println("Failed to play track?");
-      }
-      break;
-   }
+ (1) Select time period for light painting
+ 			* LED ring lights up quadrants according to number of seconds selected
+ 			* Time also show on status LEDs on box
+ (2) Press start button
+ (3) Start sequence
+ 			* LED ring does 5s countdown with beep audio on every second
+ 			* Fade down status lights on box
+ 			* Room light fades off
+ (4) Take photo!
+ 			* Shutter is held on
+ 			* Dim LED ring shows remaining time
+ 			* Start button can be pressed to stop photo early
+ (5) On compeltion (or early stop)
+ 			* Fade up room light & box status lights across 2s
+ 			* Inhibit retriggering until lights are back to full (to stop trigger happy people)
+ 			* Loading sequence on LED ring during this too
 
-   case '+': {
-      Serial.println("Vol up...");
-      uint16_t v;
-      if (! (v = sfx.volUp()) ) {
-        Serial.println("Failed to adjust");
-      } else {
-        Serial.print("Volume: "); Serial.println(v);
-      }
-      break;
-   }
+*/ 
 
-   case '-': {
-      Serial.println("Vol down...");
-      uint16_t v;
-      if (! (v=sfx.volDown()) ) {
-        Serial.println("Failed to adjust");
-      } else { 
-        Serial.print("Volume: "); 
-        Serial.println(v);
-      }
-      break;
-   }
-   
-   case '=': {
-      Serial.println("Pausing...");
-      if (! sfx.pause() ) Serial.println("Failed to pause");
-      break;
-   }
-   
-   case '>': {
-      Serial.println("Unpausing...");
-      if (! sfx.unpause() ) Serial.println("Failed to unpause");
-      break;
-   }
-   
-   case 'q': {
-      Serial.println("Stopping...");
-      if (! sfx.stop() ) Serial.println("Failed to stop");
-      break;
-   }  
 
-   case 't': {
-      Serial.print("Track time: ");
-      uint32_t current, total;
-      if (! sfx.trackTime(&current, &total) ) Serial.println("Failed to query");
-      Serial.print(current); Serial.println(" seconds");
-      break;
-   }  
 
-   case 's': {
-      Serial.print("Track size (bytes remaining/total): ");
-      uint32_t remain, total;
-      if (! sfx.trackSize(&remain, &total) ) 
-        Serial.println("Failed to query");
-      Serial.print(remain); Serial.print("/"); Serial.println(total); 
-      break;
-   }  
+//////////////////////////////////////////////////// LED SETUP
+#define NUM_LEDS_RING 			45
+#define NUM_LEDS_STAT 			5
 
-  }
+CRGB leds_ring[NUM_LEDS_RING];
+CRGB leds_stat[NUM_LEDS_STAT];
+
+// Order of status LED pixel array
+enum statusLEDs:uint8_t { START, TIMER_15S, TIMER_30S, TIMER_45S, TIMER_60S };
+
+
+//////////////////////////////////////////////////// SOUND MODULE SETUP
+
+Adafruit_Soundboard sfx = Adafruit_Soundboard(&Serial1, NULL, PIN_SFX_RST);
+// NOTE: Connect UG to ground to have the sound board boot into UART mode
+
+// Audio filenames (format should be 8chars, no '.' and then extension)
+char Audio_Beep[] = "T01NEXT0WAV";
+
+
+
+
+void setup() 
+{
+
+	while (!Serial) {;} // Wait for serial to connect
+	Serial.begin(115200);
+	
+	// Setup sound board module
+	Serial1.begin(9600);									// Open serial connection
+
+	if (!sfx.reset()) 										// Rest & check it's there
+		Serial.println("SFX module not found");
+	else
+		Serial.println("SFX module found!");
+
+
+	// PIXEL LED SETUP
+	FastLED.addLeds<WS2812B, PIN_LED_RING, GRB>(leds_ring, NUM_LEDS_RING); 
+	FastLED.addLeds<WS2812B, PIN_LED_STATUS, GRB>(leds_stat, NUM_LEDS_STAT); 
+	
+	FastLED.setMaxPowerInVoltsAndMilliamps(5,200); 						// Limit total power draw of LEDs to 200mA at 5V
+	
+	fill_solid(leds_ring, NUM_LEDS_RING, CRGB::Black);				// Black out LEDs
+	fill_solid(leds_stat, NUM_LEDS_STAT, CRGB::Black);
+	FastLED.show();
+
+
+
 }
 
 
 
 
 
+void loop() 
+{
 
-/************************ MENU HELPERS ***************************/
+	// Play audio
+	if (! sfx.playTrack(Audio_Beep) )
+		Serial.println("Failed to play track?");
 
-void flushInput() {
-  // Read all available serial input to flush pending data.
-  uint16_t timeoutloop = 0;
-  while (timeoutloop++ < 40) {
-    while(ss.available()) {
-      ss.read();
-      timeoutloop = 0;  // If char was received reset the timer
-    }
-    delay(1);
-  }
+	delay(1000);
+
+
+
 }
 
-char readBlocking() {
-  while (!Serial.available());
-  return Serial.read();
-}
-
-uint16_t readnumber() {
-  uint16_t x = 0;
-  char c;
-  while (! isdigit(c = readBlocking())) {
-    //Serial.print(c);
-  }
-  Serial.print(c);
-  x = c - '0';
-  while (isdigit(c = readBlocking())) {
-    Serial.print(c);
-    x *= 10;
-    x += c - '0';
-  }
-  return x;
-}
-
-uint8_t readline(char *buff, uint8_t maxbuff) {
-  uint16_t buffidx = 0;
-  
-  while (true) {
-    if (buffidx > maxbuff) {
-      break;
-    }
-
-    if (Serial.available()) {
-      char c =  Serial.read();
-      //Serial.print(c, HEX); Serial.print("#"); Serial.println(c);
-
-      if (c == '\r') continue;
-      if (c == 0xA) {
-        if (buffidx == 0) {  // the first 0x0A is ignored
-          continue;
-        }
-        buff[buffidx] = 0;  // null term
-        return buffidx;
-      }
-      buff[buffidx] = c;
-      buffidx++;
-    }
-  }
-  buff[buffidx] = 0;  // null term
-  return buffidx;
-}
-/************************ MENU HELPERS ***************************/
