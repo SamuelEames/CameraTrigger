@@ -40,7 +40,7 @@ SEQUENCE/PROGRAM NOTES
 
 #define PIN_SFX_RST 		4			// Reset line for SFX
 
-#define PIN_LED_RING		6			// Data pin for ring of pixel LEDs
+#define PIN_LED_RING		3			// Data pin for ring of pixel LEDs
 #define PIN_LED_STATUS	19		// Data pin for status LEDs on box
 #define PIN_LED_ROOM		10		// PWM Output to run room light
 
@@ -48,8 +48,10 @@ SEQUENCE/PROGRAM NOTES
 #define PIN_BTN_START		21		// Button use to trigger photo sequence
 #define PIN_BTN_FOOTSW	5			// Footswitch for normal photobooth setup
 
-#define PIN_CAM_FOCUS		8			// Focus trigger
-#define PIN_CAM_SHUTTER	9			// Shutter trigger
+#define PIN_CAM_FOCUS		9			// Focus trigger
+#define PIN_CAM_SHUTTER	8			// Shutter trigger
+
+#define BEEEP_PIN     	16		// Active Piezo Buzzer
 
 
 //////////////////////////////////////////////////// BUTTON DEBOUNCING
@@ -99,6 +101,9 @@ uint32_t countdownTimer_start;																	// Holds starting millis time of 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 void setup() 
 {
+	// Piezo - turn off straight away because it takes all the power
+	pinMode(BEEEP_PIN, OUTPUT);
+	digitalWrite(BEEEP_PIN, HIGH);
 
 	while (!Serial) {;} // Wait for serial to connect
 	Serial.begin(115200);
@@ -154,74 +159,118 @@ void loop()
 	// Serial.print("Current State = ");
 	// Serial.println(myState, DEC);
 
- for (byte i = 0; i < NUM_BTNS; i++) {
-    if (justpressed[i]) {
-      Serial.print(i, DEC);
-      Serial.println(" Just pressed"); 
-      // remember, check_switches() will CLEAR the 'just pressed' flag
-    }
-    if (justreleased[i]) {
-      Serial.print(i, DEC);
-      Serial.println(" Just released");
-      // remember, check_switches() will CLEAR the 'just pressed' flag
-    }
-    if (pressed[i]) {
-      Serial.print(i, DEC);
-      Serial.println(" pressed");
-      // is the button pressed down at this moment
-    }
-  }
+ // for (byte i = 0; i < NUM_BTNS; i++) 
+ // {
+ //    if (justpressed[i]) {
+ //      Serial.print(i, DEC);
+ //      Serial.println(" Just pressed"); 
+ //      // remember, check_switches() will CLEAR the 'just pressed' flag
+ //    }
+ //    if (justreleased[i]) {
+ //      Serial.print(i, DEC);
+ //      Serial.println(" Just released");
+ //      // remember, check_switches() will CLEAR the 'just pressed' flag
+ //    }
+ //    if (pressed[i]) {
+ //      Serial.print(i, DEC);
+ //      Serial.println(" pressed");
+ //      // is the button pressed down at this moment
+ //    }
+ //  }
 
 
 	switch (myState)
 	{
 		case IDLE:
-			Serial.println("IDLE");
+			// Serial.println("IDLE");
 
 			if (justpressed[BTN_START] || justpressed[BTN_FOOTSW] )				// Start sequence on start btn / footswitch
 			{
 				myState = CDOWN2_START;
 				countdownTimer_start = millis();
+				justpressed[BTN_START] = 0;
 			}	
 			
 			set_exposureTime();
 
+
+			leds_stat[START] = CRGB::Green;										// Set start LED to solid green
+
+			ledRingCountdown(0);
+
+
+			// End focus / Shutter
+			digitalWrite(PIN_CAM_FOCUS, LOW);
+			digitalWrite(PIN_CAM_SHUTTER, LOW);
+
 			break;
 
 		case CDOWN2_START:
-			Serial.println("CDOWN2_START");
+			// Serial.println("CDOWN2_START");
 			// Check if timer has elapsed
 			if ( (countdownTimer_start +  PERIOD_CDOWN2_START) <= millis() )
+			{
+				myState = CDOWN2_END;
+				countdownTimer_start = millis();
+			}
+
+			// jump back out if start button was pressed again
+			if (justpressed[BTN_START])				
+			{
 				myState = IDLE;
+				justpressed[BTN_START] = 0;
+			}	
+
+			ledRingCountdown(PERIOD_CDOWN2_START);
+
+			// Start focus
+			digitalWrite(PIN_CAM_FOCUS, HIGH);
 			break;
 
 		case CDOWN2_END:
-			Serial.println("CDOWN2_END");
+			// Serial.println("CDOWN2_END");
+
 			if (justpressed[BTN_START])				// Stop sequence early
 			{
 				myState = CDOWN2_IDLE;
 				countdownTimer_start = millis();
+				justpressed[BTN_START] = 0;
 			}
 
 			// Check if timer has elapsed
-			if ( (countdownTimer_start + (1000 * exposureDuration[exposureSelection])) <= millis() )
+			if ( (countdownTimer_start + (1000 * (uint32_t) exposureDuration[exposureSelection])) <= millis() )
+			{
+				countdownTimer_start = millis();
 				myState = CDOWN2_IDLE;
+			}
+
+			ledRingCountdown(1000 * (uint32_t) exposureDuration[exposureSelection]);
+
+			// Start Shutter
+			digitalWrite(PIN_CAM_SHUTTER, HIGH);
 			break;
 
 		case CDOWN2_IDLE:
-			Serial.println("CDOWN2_IDLE`");
+			// Serial.println("CDOWN2_IDLE`");
 			set_exposureTime();
 
 			// Check if timer has elapsed
 			if ( (countdownTimer_start +  PERIOD_CDOWN2_IDLE) <= millis() )
 				myState = IDLE;
 
+			ledRingCountdown(PERIOD_CDOWN2_IDLE);
+
+			// End focus / Shutter
+			digitalWrite(PIN_CAM_FOCUS, LOW);
+			digitalWrite(PIN_CAM_SHUTTER, LOW);
 			break;
 
 		default:
 			break;
 
 	}
+
+	FastLED.show();
 
 
 }
@@ -234,6 +283,86 @@ void setTimeLEDs()
 	// Sets timer LEDs
 
 
+
+	return;
+}
+
+
+void ledRingCountdown(uint32_t period)
+{
+	uint32_t elapsed_time = millis() - countdownTimer_start;
+	float 	elapsed_percent = elapsed_time / (float) period;
+
+
+
+	
+
+
+
+	switch (myState)
+	{
+		case IDLE:
+			// Ligth quadrants according to time period selected
+
+			fill_solid(leds_ring, NUM_LEDS_RING, CRGB::Black);
+
+			for (uint8_t i = 0; i < exposureSelection + 1; ++i)
+			{
+				for (uint8_t j = 0; j < NUM_LEDS_RING/4; ++j)
+				{
+					leds_ring[(i*NUM_LEDS_RING/4) + j] = CRGB::White;	
+				}				
+			}
+
+
+			// Turn brightness up
+			FastLED.setBrightness(255);
+			break;
+
+
+		case CDOWN2_START:
+			for (uint8_t i = 0; i < NUM_LEDS_RING; ++i)
+			{
+				if ( (elapsed_percent * NUM_LEDS_RING) >= i )
+					leds_ring[i] = CRGB::Red;	
+				else
+					leds_ring[i] = CRGB::Black;	
+			}
+
+			// Turn brightness down
+			FastLED.setBrightness((1-elapsed_percent) * 250 + 5 );
+			break;
+
+
+		case CDOWN2_END: 
+			for (uint8_t i = 0; i < NUM_LEDS_RING; ++i)
+			{
+				if ( (elapsed_percent * NUM_LEDS_RING) >= i )
+					leds_ring[i] = CRGB::Black;	
+				else
+					leds_ring[i] = CRGB::Blue;	
+			}		
+			break;
+
+
+		case CDOWN2_IDLE:
+			for (uint8_t i = 0; i < NUM_LEDS_RING; ++i)
+			{
+				if ( (elapsed_percent * NUM_LEDS_RING) >= i )
+					leds_ring[i] = CRGB::Black;	
+				else
+					leds_ring[i] = CRGB::White;	
+			}		
+
+			// Turn brightness up
+			FastLED.setBrightness(elapsed_percent * 250 + 5 );
+
+
+			break;
+
+		default:
+			break;
+	}
 
 	return;
 }
@@ -261,7 +390,7 @@ void set_exposureTime()
 	}
 
 
-	FastLED.show();
+	
 
 	return;
 }
