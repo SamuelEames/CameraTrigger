@@ -42,7 +42,7 @@ SEQUENCE/PROGRAM NOTES
 
 #define PIN_LED_RING		3			// Data pin for ring of pixel LEDs
 #define PIN_LED_STATUS	19		// Data pin for status LEDs on box
-#define PIN_LED_ROOM		10		// PWM Output to run room light
+#define PIN_LED_ROOM		10		// Relay Output to run room light
 
 #define PIN_BTN_TIME		20		// Button used to set time period for light painting
 #define PIN_BTN_START		21		// Button use to trigger photo sequence
@@ -105,8 +105,8 @@ void setup()
 	pinMode(BEEEP_PIN, OUTPUT);
 	digitalWrite(BEEEP_PIN, HIGH);
 
-	while (!Serial) {;} // Wait for serial to connect
-	Serial.begin(115200);
+	// while (!Serial) {;} // Wait for serial to connect
+	// Serial.begin(115200);
 	
 	// Setup sound board module
 	Serial1.begin(9600);									// Open serial connection
@@ -129,7 +129,7 @@ void setup()
 
 	// IO Setup
 	pinMode(PIN_LED_ROOM, 		OUTPUT);
-	analogWrite(PIN_LED_ROOM, 0);
+	digitalWrite(PIN_LED_ROOM, LOW);
 
 	pinMode(PIN_CAM_FOCUS, 		OUTPUT);
 	pinMode(PIN_CAM_SHUTTER, 	OUTPUT);
@@ -182,7 +182,11 @@ void loop()
 	switch (myState)
 	{
 		case IDLE:
-			// Serial.println("IDLE");
+			// End focus / Shutter
+			digitalWrite(PIN_CAM_FOCUS, LOW);
+			digitalWrite(PIN_CAM_SHUTTER, LOW);
+			
+			// delay(100);		// Ensure shutter is closed before turning on light
 
 			if (justpressed[BTN_START] || justpressed[BTN_FOOTSW] )				// Start sequence on start btn / footswitch
 			{
@@ -199,9 +203,10 @@ void loop()
 			ledRingCountdown(0);
 
 
-			// End focus / Shutter
-			digitalWrite(PIN_CAM_FOCUS, LOW);
-			digitalWrite(PIN_CAM_SHUTTER, LOW);
+
+
+			// Turn on room light
+			digitalWrite(PIN_LED_ROOM, HIGH);
 
 			break;
 
@@ -225,6 +230,9 @@ void loop()
 
 			// Start focus
 			digitalWrite(PIN_CAM_FOCUS, HIGH);
+
+			// Turn off room light
+			digitalWrite(PIN_LED_ROOM, LOW);
 			break;
 
 		case CDOWN2_END:
@@ -251,6 +259,12 @@ void loop()
 			break;
 
 		case CDOWN2_IDLE:
+			// End focus / Shutter
+			digitalWrite(PIN_CAM_FOCUS, LOW);
+			digitalWrite(PIN_CAM_SHUTTER, LOW);
+
+			delay(100);		// Ensure shutte is closed before turning room lights on again
+
 			// Serial.println("CDOWN2_IDLE`");
 			set_exposureTime();
 
@@ -260,9 +274,10 @@ void loop()
 
 			ledRingCountdown(PERIOD_CDOWN2_IDLE);
 
-			// End focus / Shutter
-			digitalWrite(PIN_CAM_FOCUS, LOW);
-			digitalWrite(PIN_CAM_SHUTTER, LOW);
+
+
+			// Turn on room light
+			digitalWrite(PIN_LED_ROOM, HIGH);
 			break;
 
 		default:
@@ -329,6 +344,20 @@ void ledRingCountdown(uint32_t period)
 					leds_ring[i] = CRGB::Black;	
 			}
 
+			// Beep with countdown
+			if (elapsed_percent >= 0 && elapsed_percent <= 0.1)
+				digitalWrite(BEEEP_PIN, LOW);
+			else if (elapsed_percent >= 0.2 && elapsed_percent <= 0.3)
+				digitalWrite(BEEEP_PIN, LOW);
+			else if (elapsed_percent >= 0.4 && elapsed_percent <= 0.5)
+				digitalWrite(BEEEP_PIN, LOW);
+			else if (elapsed_percent >= 0.6 && elapsed_percent <= 0.7)
+				digitalWrite(BEEEP_PIN, LOW);
+			else if (elapsed_percent >= 0.8 && elapsed_percent <= 0.9)
+				digitalWrite(BEEEP_PIN, LOW);
+			else
+				digitalWrite(BEEEP_PIN, HIGH);
+
 			// Turn brightness down
 			FastLED.setBrightness((1-elapsed_percent) * 250 + 5 );
 			break;
@@ -353,6 +382,12 @@ void ledRingCountdown(uint32_t period)
 				else
 					leds_ring[i] = CRGB::White;	
 			}		
+
+			// Single beep
+			if (elapsed_percent >= 0 && elapsed_percent <= 0.1)
+				digitalWrite(BEEEP_PIN, LOW);
+			else
+				digitalWrite(BEEEP_PIN, HIGH);
 
 			// Turn brightness up
 			FastLED.setBrightness(elapsed_percent * 250 + 5 );
