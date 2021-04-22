@@ -121,7 +121,7 @@ void setup()
 	FastLED.addLeds<WS2812B, PIN_LED_RING, GRB>(leds_ring, NUM_LEDS_RING); 
 	FastLED.addLeds<WS2812B, PIN_LED_STATUS, GRB>(leds_stat, NUM_LEDS_STAT); 
 	
-	FastLED.setMaxPowerInVoltsAndMilliamps(5,200); 						// Limit total power draw of LEDs to 200mA at 5V
+	FastLED.setMaxPowerInVoltsAndMilliamps(5,300); 						// Limit total power draw of LEDs to 200mA at 5V
 	
 	fill_solid(leds_ring, NUM_LEDS_RING, CRGB::Black);				// Black out LEDs
 	fill_solid(leds_stat, NUM_LEDS_STAT, CRGB::Black);
@@ -146,6 +146,7 @@ void setup()
 
 void loop() 
 {
+	static uint8_t lastState = IDLE;
 
 	// // Play audio
 	// if (! sfx.playTrack(Audio_Beep) )
@@ -159,24 +160,7 @@ void loop()
 	// Serial.print("Current State = ");
 	// Serial.println(myState, DEC);
 
- // for (byte i = 0; i < NUM_BTNS; i++) 
- // {
- //    if (justpressed[i]) {
- //      Serial.print(i, DEC);
- //      Serial.println(" Just pressed"); 
- //      // remember, check_switches() will CLEAR the 'just pressed' flag
- //    }
- //    if (justreleased[i]) {
- //      Serial.print(i, DEC);
- //      Serial.println(" Just released");
- //      // remember, check_switches() will CLEAR the 'just pressed' flag
- //    }
- //    if (pressed[i]) {
- //      Serial.print(i, DEC);
- //      Serial.println(" pressed");
- //      // is the button pressed down at this moment
- //    }
- //  }
+
 
 
 	switch (myState)
@@ -185,8 +169,18 @@ void loop()
 			// End focus / Shutter
 			digitalWrite(PIN_CAM_FOCUS, LOW);
 			digitalWrite(PIN_CAM_SHUTTER, LOW);
+
+
+			if ((lastState != IDLE) && (lastState != CDOWN2_IDLE))
+			{
+				// Single beep
+				digitalWrite(BEEEP_PIN, LOW);
+				delay(300);		// Ensure shutter is closed before turning on light
+				digitalWrite(BEEEP_PIN, HIGH);
+				
+			}
 			
-			// delay(100);		// Ensure shutter is closed before turning on light
+			
 
 			if (justpressed[BTN_START] || justpressed[BTN_FOOTSW] )				// Start sequence on start btn / footswitch
 			{
@@ -208,10 +202,11 @@ void loop()
 			// Turn on room light
 			digitalWrite(PIN_LED_ROOM, HIGH);
 
+			lastState = IDLE;
 			break;
 
+
 		case CDOWN2_START:
-			// Serial.println("CDOWN2_START");
 			// Check if timer has elapsed
 			if ( (countdownTimer_start +  PERIOD_CDOWN2_START) <= millis() )
 			{
@@ -233,10 +228,12 @@ void loop()
 
 			// Turn off room light
 			digitalWrite(PIN_LED_ROOM, LOW);
+
+			lastState = CDOWN2_START;
 			break;
 
+
 		case CDOWN2_END:
-			// Serial.println("CDOWN2_END");
 
 			if (justpressed[BTN_START])				// Stop sequence early
 			{
@@ -256,16 +253,26 @@ void loop()
 
 			// Start Shutter
 			digitalWrite(PIN_CAM_SHUTTER, HIGH);
+
+			lastState = CDOWN2_END;
 			break;
+
 
 		case CDOWN2_IDLE:
 			// End focus / Shutter
 			digitalWrite(PIN_CAM_FOCUS, LOW);
 			digitalWrite(PIN_CAM_SHUTTER, LOW);
 
-			delay(100);		// Ensure shutte is closed before turning room lights on again
+			if (lastState != CDOWN2_IDLE)
+			{
+				// Single beep
+				digitalWrite(BEEEP_PIN, LOW);
+				delay(300);		// Ensure shutter is closed before turning on light
+				digitalWrite(BEEEP_PIN, HIGH);
+				
+			}
 
-			// Serial.println("CDOWN2_IDLE`");
+
 			set_exposureTime();
 
 			// Check if timer has elapsed
@@ -278,6 +285,8 @@ void loop()
 
 			// Turn on room light
 			digitalWrite(PIN_LED_ROOM, HIGH);
+
+			lastState = CDOWN2_IDLE;
 			break;
 
 		default:
@@ -328,6 +337,8 @@ void ledRingCountdown(uint32_t period)
 					leds_ring[(i*NUM_LEDS_RING/4) + j] = CRGB::White;	
 				}				
 			}
+
+
 
 
 			// Turn brightness up
@@ -382,12 +393,6 @@ void ledRingCountdown(uint32_t period)
 				else
 					leds_ring[i] = CRGB::White;	
 			}		
-
-			// Single beep
-			if (elapsed_percent >= 0 && elapsed_percent <= 0.1)
-				digitalWrite(BEEEP_PIN, LOW);
-			else
-				digitalWrite(BEEEP_PIN, HIGH);
 
 			// Turn brightness up
 			FastLED.setBrightness(elapsed_percent * 250 + 5 );
